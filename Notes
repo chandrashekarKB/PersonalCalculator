@@ -1,1 +1,50 @@
-hello world
+USE [MFG_CONFIGDB]
+GO
+/****** Object:  StoredProcedure [dbo].[USP_SynapseLoad_GetFileConfigDetails]    Script Date: 9/12/2024 10:42:39 AM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+/****** Object:  StoredProcedure [dbo].[USP_SynapseLoad_GetFileConfigDetails]    Script Date: 5/20/2021 3:27:13 PM ******/
+ALTER PROC [dbo].[USP_SynapseLoad_GetFileConfigDetails] 
+@i_ConfigId INT
+AS              
+BEGIN              
+
+	DECLARE @JSONString NVARCHAR(MAX)
+    DECLARE @Schema_JSONString NVARCHAR(MAX)
+
+	SET @JSONString =
+	(
+		SELECT
+			DLC.DataLoadConfigurationId,
+			ISNULL(DLC.SourceContainer +'/','') + DLC.DLSourceFolderPath DLSourceFolderPath,
+			DLC.BlobContainerPath+'/'+DLC.DestFolderPath DestFolderPath, 	     
+			dbo.Fn_GetESTDate(ISNULL(DLC.LastModifiedDate, CAST('' AS DATETIME))) AS LastModifiedDate,
+			ISNULL(REPLACE(SourceQuery,'sourcequeryvariable',ISNULL(sourcequeryvariable,'1900-01-01 00:00:00.000')),'') SourceQuery,
+			DLNotebookPath,
+			SchemaMismatchFlag,
+			DLC.FileExtention
+		FROM [dbo].[EDL_Synapse_DataLoadConfiguration] DLC WITH(NOLOCK)
+		WHERE DLC.Active = 1
+		AND DLC.DataLoadConfigurationId =  @i_ConfigId
+	FOR JSON PATH)
+	
+	--print @JSONString          
+	SET @JSONString=REPLACE(REPLACE(@JSONString,']',''),'[','')
+
+	SET @Schema_JSONString = (
+						SELECT SSC.TargetColumnOrder, SSC.ColumnName 
+						FROM [dbo].[EDL_Synapse_DataLoadConfiguration] SDLC 
+							INNER JOIN EDL_Synapse_SchemaConfiguration SSC 
+							ON	SDLC.DataLoadConfigurationId = SSC.DataLoadConfigurationId
+							AND SDLC.DataLoadConfigurationId  =  @i_ConfigId
+							AND SDLC.Active = 1
+							AND SSC.Active = 1
+						ORDER BY SSC.TargetColumnOrder
+					FOR JSON PATH
+			) 
+	SET @JSONString = JSON_MODIFY(@JSONString, '$.SchemaInfo', ISNULL(@Schema_JSONString, ''))
+
+	SELECT @JSONString AS [Parameters],JSON_VALUE(@JSONString,'$.DLNotebookPath') AS NoteBookDir        
+END
